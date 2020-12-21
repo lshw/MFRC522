@@ -3,7 +3,7 @@
 /******************************************************************************
  * 用户 API
  ******************************************************************************/
- 
+
 /******************************************************************************
  * 函 数 名：init
  * 功能描述：初始化RC522
@@ -12,28 +12,30 @@
  ******************************************************************************/
 void MFRC522_init()
 {
- 
-  //SPI
-  bcm2835_spi_begin();
-  bcm2835_spi_setBitOrder(BCM2835_SPI_BIT_ORDER_MSBFIRST); 
-  bcm2835_spi_setDataMode(BCM2835_SPI_MODE0);
-  //bcm2835_spi_setClockDivider(2);
-  bcm2835_spi_setClockDivider(BCM2835_SPI_CLOCK_DIVIDER_65536);
-  bcm2835_spi_chipSelect(BCM2835_SPI_CS0); 
-  bcm2835_spi_setChipSelectPolarity(BCM2835_SPI_CS0, LOW);
- 
+
+  hal_spi_master_config_t l_config;
+  hal_spi_master_send_and_receive_config_t spi_send_and_receive_config;
+  //配置SPI参数
+  l_config.bit_order = HAL_SPI_MASTER_MSB_FIRST;
+  l_config.slave_port = HAL_SPI_MASTER_SLAVE_0;
+  l_config.clock_frequency = 1000000;
+  l_config.phase = HAL_SPI_MASTER_CLOCK_PHASE1;
+  l_config.polarity = HAL_SPI_MASTER_CLOCK_POLARITY0;
+  //初始化SPI
+  opencpu_spi_init(&l_config);
+
   writeMFRC522(CommandReg, PCD_RESETPHASE);
- 
+
   writeMFRC522(TModeReg, 0x8D);   //Tauto=1; f(Timer) = 6.78MHz/TPreScaler
   writeMFRC522(TPrescalerReg, 0x3E);  //TModeReg[3..0] + TPrescalerReg
   writeMFRC522(TReloadRegL, 30);
   writeMFRC522(TReloadRegH, 0);
   writeMFRC522(TxAutoReg, 0x40);    //100%ASK
   writeMFRC522(ModeReg, 0x3D);    // CRC valor inicial de 0x6363
- 
+
   RFID_antennaOn();    //打开天线
 }
- 
+
 /******************************************************************************
  * 函 数 名：writeMFRC522
  * 功能描述：向MFRC522的某一寄存器写一个字节数据
@@ -44,13 +46,13 @@ void MFRC522_init()
 void writeMFRC522(unsigned char Address, unsigned char value)
 {
     char buff[2];
- 
+
     buff[0] = (char)((Address<<1)&0x7E);
     buff[1] = (char)value;
-     
-    bcm2835_spi_transfern(buff,2);  
+    opencpu_spi_write(buff,2);
+    bcm2835_spi_transfern(buff,2);
 }
- 
+
 /******************************************************************************
  * 函 数 名：readMFRC522
  * 功能描述：从MFRC522的某一寄存器读一个字节数据
@@ -60,12 +62,13 @@ void writeMFRC522(unsigned char Address, unsigned char value)
 //unsigned char RFID_readMFRC522(unsigned char Address)
 unsigned char readMFRC522(unsigned char Address)
 {
-    char buff[2];
-    buff[0] = ((Address<<1)&0x7E)|0x80;
-    bcm2835_spi_transfern(buff,2);
-    return (uint8_t)buff[1];
+    char rx_buff[2];
+    char tx_buff;
+    spi_tx = ((Address<<1)&0x7E)|0x80;
+    opencpu_spi_rw(&tx_buff,1,rx_buf,2);
+    return (uint8_t)rx_buff[1];
 }
- 
+
 /******************************************************************************
  * 函 数 名：setBitMask
  * 功能描述：置RC522寄存器位
@@ -78,7 +81,7 @@ void RFID_setBitMask(unsigned char reg, unsigned char mask)
   tmp = readMFRC522(reg);
   writeMFRC522(reg, tmp | mask);  // set bit mask
 }
- 
+
 /******************************************************************************
  * 函 数 名：clearBitMask
  * 功能描述：清RC522寄存器位
@@ -91,7 +94,7 @@ void RFID_clearBitMask(unsigned char reg, unsigned char mask)
   tmp = readMFRC522(reg);
   writeMFRC522(reg, tmp & (~mask));  // clear bit mask
 }
- 
+
 /******************************************************************************
  * 函 数 名：antennaOn
  * 功能描述：开启天线,每次启动或关闭天险发射之间应至少有1ms的间隔
@@ -101,14 +104,14 @@ void RFID_clearBitMask(unsigned char reg, unsigned char mask)
 void RFID_antennaOn(void)
 {
   unsigned char temp;
- 
+
   temp = readMFRC522(TxControlReg);
   if (!(temp & 0x03))
   {
     RFID_setBitMask(TxControlReg, 0x03);
   }
 }
- 
+
 /******************************************************************************
  * 函 数 名：antennaOff
  * 功能描述：关闭天线,每次启动或关闭天险发射之间应至少有1ms的间隔
@@ -118,14 +121,14 @@ void RFID_antennaOn(void)
 void RFID_antennaOff(void)
 {
   unsigned char temp;
- 
+
   temp = readMFRC522(TxControlReg);
   if (!(temp & 0x03))
   {
     RFID_clearBitMask(TxControlReg, 0x03);
   }
 }
- 
+
 /******************************************************************************
  * 函 数 名：calculateCRC
  * 功能描述：用MF522计算CRC
@@ -135,16 +138,16 @@ void RFID_antennaOff(void)
 void RFID_calculateCRC(unsigned char *pIndata, unsigned char len, unsigned char *pOutData)
 {
   unsigned char i, n;
- 
+
   RFID_clearBitMask(DivIrqReg, 0x04);      //CRCIrq = 0
   RFID_setBitMask(FIFOLevelReg, 0x80);     //清FIFO指针
   //Write_MFRC522(CommandReg, PCD_IDLE);
- 
+
   //向FIFO中写入数据
   for (i=0; i<len; i++)
     writeMFRC522(FIFODataReg, *(pIndata+i));
   writeMFRC522(CommandReg, PCD_CALCCRC);
- 
+
   //等待CRC计算完成
   i = 0xFF;
   do
@@ -153,12 +156,12 @@ void RFID_calculateCRC(unsigned char *pIndata, unsigned char len, unsigned char 
     i--;
   }
   while ((i!=0) && !(n&0x04));      //CRCIrq = 1
- 
+
   //读取CRC计算结果
   pOutData[0] = readMFRC522(CRCResultRegL);
   pOutData[1] = readMFRC522(CRCResultRegM);
 }
- 
+
 /******************************************************************************
  * 函 数 名：MFRC522ToCard
  * 功能描述：RC522和ISO14443卡通讯
@@ -177,7 +180,7 @@ unsigned char RFID_MFRC522ToCard(unsigned char command, unsigned char *sendData,
   unsigned char lastBits;
   unsigned char n;
   unsigned int i;
- 
+
   switch (command)
   {
     case PCD_AUTHENT:   //认证卡密
@@ -195,22 +198,22 @@ unsigned char RFID_MFRC522ToCard(unsigned char command, unsigned char *sendData,
     default:
       break;
   }
- 
+
   writeMFRC522(CommIEnReg, irqEn|0x80); //允许中断请求
   RFID_clearBitMask(CommIrqReg, 0x80);       //清除所有中断请求位
   RFID_setBitMask(FIFOLevelReg, 0x80);       //FlushBuffer=1, FIFO初始化
- 
+
   writeMFRC522(CommandReg, PCD_IDLE);   //无动作，取消当前命令
- 
+
   //向FIFO中写入数据
   for (i=0; i<sendLen; i++)
     writeMFRC522(FIFODataReg, sendData[i]);
- 
+
   //执行命令
   writeMFRC522(CommandReg, command);
   if (command == PCD_TRANSCEIVE)
     RFID_setBitMask(BitFramingReg, 0x80);    //StartSend=1,transmission of data starts
- 
+
   //等待接收数据完成
   i = 2000; //i根据时钟频率调整，操作M1卡最大等待时间25ms
   do
@@ -221,9 +224,9 @@ unsigned char RFID_MFRC522ToCard(unsigned char command, unsigned char *sendData,
     i--;
   }
   while ((i!=0) && !(n&0x01) && !(n&waitIRq));
- 
+
   RFID_clearBitMask(BitFramingReg, 0x80);      //StartSend=0
- 
+
   if (i != 0)
   {
     if(!(readMFRC522(ErrorReg) & 0x1B)) //BufferOvfl Collerr CRCErr ProtecolErr
@@ -231,7 +234,7 @@ unsigned char RFID_MFRC522ToCard(unsigned char command, unsigned char *sendData,
       status = MI_OK;
       if (n & irqEn & 0x01)
         status = MI_NOTAGERR;     //??
- 
+
       if (command == PCD_TRANSCEIVE)
       {
         n = readMFRC522(FIFOLevelReg);
@@ -240,12 +243,12 @@ unsigned char RFID_MFRC522ToCard(unsigned char command, unsigned char *sendData,
           *backLen = (n-1)*8 + lastBits;
         else
           *backLen = n*8;
- 
+
         if (n == 0)
           n = 1;
         if (n > MAX_LEN)
           n = MAX_LEN;
- 
+
         //读取FIFO中接收到的数据
         for (i=0; i<n; i++)
           backData[i] = readMFRC522(FIFODataReg);
@@ -254,14 +257,14 @@ unsigned char RFID_MFRC522ToCard(unsigned char command, unsigned char *sendData,
     else
       status = MI_ERR;
   }
- 
+
   //SetBitMask(ControlReg,0x80);           //timer stops
   //Write_MFRC522(CommandReg, PCD_IDLE);
- 
+
   return status;
 }
- 
- 
+
+
 /******************************************************************************
  * 函 数 名：findCard
  * 功能描述：寻卡，读取卡类型号
@@ -278,18 +281,18 @@ unsigned char RFID_findCard(unsigned char reqMode, unsigned char *TagType)
 {
   unsigned char status;
   unsigned int backBits;      //接收到的数据位数
- 
+
   writeMFRC522(BitFramingReg, 0x07);    //TxLastBists = BitFramingReg[2..0] ???
- 
+
   TagType[0] = reqMode;
   status = RFID_MFRC522ToCard(PCD_TRANSCEIVE, TagType, 1, TagType, &backBits);
- 
+
   if ((status != MI_OK) || (backBits != 0x10))
     status = MI_ERR;
- 
+
   return status;
 }
- 
+
 /******************************************************************************
  * 函 数 名：anticoll
  * 功能描述：防冲突检测，读取选中卡片的卡序列号
@@ -302,16 +305,16 @@ unsigned char RFID_anticoll(unsigned char *serNum)
   unsigned char i;
   unsigned char serNumCheck=0;
   unsigned int unLen;
- 
+
   RFID_clearBitMask(Status2Reg, 0x08);   //TempSensclear
   RFID_clearBitMask(CollReg,0x80);     //ValuesAfterColl
   writeMFRC522(BitFramingReg, 0x00);    //TxLastBists = BitFramingReg[2..0]
- 
+
   serNum[0] = PICC_ANTICOLL;
   serNum[1] = 0x20;
- 
+
   status = RFID_MFRC522ToCard(PCD_TRANSCEIVE, serNum, 2, serNum, &unLen);
- 
+
   if (status == MI_OK)
   {
     //校验卡序列号
@@ -323,12 +326,12 @@ unsigned char RFID_anticoll(unsigned char *serNum)
       status = MI_ERR;
     }
   }
- 
+
   RFID_setBitMask(CollReg, 0x80);    //ValuesAfterColl=1
- 
+
   return status;
 }
- 
+
 /******************************************************************************
  * 函 数 名：auth
  * 功能描述：验证卡片密码
@@ -346,7 +349,7 @@ unsigned char RFID_auth(unsigned char authMode, unsigned char BlockAddr, unsigne
   unsigned int recvBits;
   unsigned char i;
   unsigned char buff[12];
- 
+
   //验证指令+块地址＋扇区密码＋卡序列号
   buff[0] = authMode;
   buff[1] = BlockAddr;
@@ -354,14 +357,14 @@ unsigned char RFID_auth(unsigned char authMode, unsigned char BlockAddr, unsigne
     buff[i+2] = *(Sectorkey+i);
   for (i=0; i<4; i++)
     buff[i+8] = *(serNum+i);
-     
+
   status = RFID_MFRC522ToCard(PCD_AUTHENT, buff, 12, buff, &recvBits);
   if ((status != MI_OK) || (!(readMFRC522(Status2Reg) & 0x08)))
     status = MI_ERR;
- 
+
   return status;
 }
- 
+
 /******************************************************************************
  * 函 数 名：read
  * 功能描述：读块数据
@@ -372,18 +375,18 @@ unsigned char RFID_read(unsigned char blockAddr, unsigned char *recvData)
 {
   unsigned char status;
   unsigned int unLen;
- 
+
   recvData[0] = PICC_READ;
   recvData[1] = blockAddr;
   RFID_calculateCRC(recvData,2, &recvData[2]);
   status = RFID_MFRC522ToCard(PCD_TRANSCEIVE, recvData, 4, recvData, &unLen);
- 
+
   if ((status != MI_OK) || (unLen != 0x90))
     status = MI_ERR;
- 
+
   return status;
 }
- 
+
 /******************************************************************************
  * 函 数 名：write
  * 功能描述：写块数据
@@ -396,30 +399,29 @@ unsigned char RFID_write(unsigned char blockAddr, unsigned char *writeData)
   unsigned int recvBits;
   unsigned char i;
   unsigned char buff[18];
- 
+
   buff[0] = PICC_WRITE;
   buff[1] = blockAddr;
   RFID_calculateCRC(buff, 2, &buff[2]);
   status = RFID_MFRC522ToCard(PCD_TRANSCEIVE, buff, 4, buff, &recvBits);
- 
+
   if ((status != MI_OK) || (recvBits != 4) || ((buff[0] & 0x0F) != 0x0A))
     status = MI_ERR;
- 
+
   if (status == MI_OK)
   {
     for (i=0; i<16; i++)    //?FIFO?16Byte?? Datos a la FIFO 16Byte escribir
       buff[i] = *(writeData+i);
-       
     RFID_calculateCRC(buff, 16, &buff[16]);
     status = RFID_MFRC522ToCard(PCD_TRANSCEIVE, buff, 18, buff, &recvBits);
- 
+
     if ((status != MI_OK) || (recvBits != 4) || ((buff[0] & 0x0F) != 0x0A))
       status = MI_ERR;
   }
- 
+
   return status;
 }
- 
+
 /******************************************************************************
  * 函 数 名：selectTag
  * 功能描述：选卡，读取卡存储器容量
@@ -433,18 +435,18 @@ unsigned char RFID_selectTag(unsigned char *serNum)
   unsigned char size;
   unsigned int recvBits;
   unsigned char buffer[9];
- 
+
   //ClearBitMask(Status2Reg, 0x08);                        //MFCrypto1On=0
- 
+
   //buffer[0] = PICC_SElECTTAG;
   buffer[0] = PICC_ANTICOLL1;
   buffer[1] = 0x70;
- 
+
   for (i=0; i<5; i++)
     buffer[i+2] = *(serNum+i);
- 
+
   RFID_calculateCRC(buffer, 7, &buffer[7]);
-   
+
   status = RFID_MFRC522ToCard(PCD_TRANSCEIVE, buffer, 9, buffer, &recvBits);
   if ((status == MI_OK) && (recvBits == 0x18))
     size = buffer[i];
@@ -452,7 +454,7 @@ unsigned char RFID_selectTag(unsigned char *serNum)
     size = 0;
   return size;
 }
- 
+
 /******************************************************************************
  * 函 数 名：Halt
  * 功能描述：命令卡片进入休眠状态
@@ -464,10 +466,10 @@ void RFID_halt()
   unsigned char status;
   unsigned int unLen;
   unsigned char buff[4];
- 
+
   buff[0] = PICC_HALT;
   buff[1] = 0;
   RFID_calculateCRC(buff, 2, &buff[2]);
- 
+
   status = RFID_MFRC522ToCard(PCD_TRANSCEIVE, buff, 4, buff,&unLen);
 }
